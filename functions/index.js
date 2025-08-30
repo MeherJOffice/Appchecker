@@ -3,6 +3,7 @@ const functions = require("firebase-functions/v1");   // 1st-gen
 const admin = require("firebase-admin");
 const cors = require("cors")({ origin: true });
 const crypto = require("crypto");
+const querystring = require("querystring"); // for Slack slash command parsing
 
 // Node 18+ has global.fetch. Keep a fallback for older local shells.
 const fetch = global.fetch
@@ -20,11 +21,19 @@ const getUpdatesWebhook = () =>
 const getSubmitWebhook = () =>
     (functions.config().slack && (functions.config().slack.confirm_webhook_url || functions.config().slack.updates_webhook_url || functions.config().slack.webhook_url)) || "";
 
-// Restrict processing to this submit channel (optional but recommended)
+// REPORT channel — monthly / on-demand reports go here
+const getReportWebhook = () =>
+    (functions.config().slack && functions.config().slack.report_webhook_url) || "";
+
+// Restrict processing to this submit channel (ID). Example: "C0123456789"
 const getSubmitChannelId = () =>
     (functions.config().slack && functions.config().slack.submit_channel_id) || "";
 
-// Slack signing secret for Events API
+// Restrict /repport to this report channel (ID). Example: "C0123456789"
+const getReportChannelId = () =>
+    (functions.config().slack && functions.config().slack.report_channel_id) || "";
+
+// Slack signing secret for Events API & Slash Commands
 const getSlackSigningSecret = () =>
     (functions.config().slack && functions.config().slack.signing_secret) || "";
 
@@ -36,6 +45,9 @@ function getPingToken() {
     if (mode === "everyone") return "<!everyone> ";
     return "";
 }
+
+// Optional: tag Abdelfatteh by Slack user ID (else show his name)
+const getAbdUserId = () => (functions.config().slack && functions.config().slack.abd_user_id) || "";
 
 // (Optional) API key used by /addMonitor
 const getMonitorApiKey = () =>
@@ -93,17 +105,15 @@ async function postToWebhook(webhookUrl, { text, icon, ping = false }) {
     });
 }
 
-/** Accept only real App Store URLs (apps.apple.com or itunes.apple.com) and extract the numeric id */
+/** Accept only real App Store URLs (apps.apple.com or itunes.apple.com) and extract numeric id */
 function parseAppStoreLink(text = "") {
     const m = String(text).match(/https?:\/\/(?:apps|itunes)\.apple\.com\/[^\s)]+/i);
     if (!m) return null;
     const raw = m[0];
     try {
         const u = new URL(raw);
-        // Try /.../id123...
         const p = u.pathname.match(/\/id(\d{5,})/i);
         let id = p && p[1] ? p[1] : null;
-        // Fallback: ?id=123...
         if (!id) {
             const q = u.searchParams.get("id");
             if (q && /^\d{5,}$/.test(q)) id = q;
@@ -111,6 +121,32 @@ function parseAppStoreLink(text = "") {
         if (id) return { id, url: raw };
     } catch (_) { }
     return null;
+}
+
+/** Month stamp in Africa/Tunis, "YYYY-MM" — used for grouping reports */
+function monthStampTunis(date = new Date()) {
+    const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Tunis", year: "numeric", month: "2-digit" });
+    const parts = Object.fromEntries(fmt.formatToParts(date).map(p => [p.type, p.value]));
+    return `${parts.year}-${parts.month}`; // e.g. "2025-08"
+}
+/** Human date "YYYY-MM-DD" in Africa/Tunis */
+function dateStrTunis(date = new Date()) {
+    const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Tunis", year: "numeric", month: "2-digit", day: "2-digit" });
+    return fmt.format(date);
+}
+/** Friendly month name */
+function monthLabel(stamp /* "YYYY-MM" */) {
+    const [y, m] = stamp.split("-").map(Number);
+    const d = new Date(Date.UTC(y, m - 1, 1));
+    return d.toLocaleString("en-US", { month: "long", year: "numeric" }); // e.g. "August 2025"
+}
+/** Is today the last day of month in Africa/Tunis? */
+function isLastDayOfMonthTunis(now = new Date()) {
+    const today = dateStrTunis(now).slice(0, 10); // "YYYY-MM-DD"
+    const [y, m, d] = today.split("-").map(Number);
+    const end = new Date(Date.UTC(y, m, 0)); // last day (UTC month trick)
+    const endStrLocal = dateStrTunis(end);
+    return today === endStrLocal;
 }
 
 /* ===================================== Lookup ===================================== */
@@ -270,15 +306,20 @@ exports.monitorApps = functions
                     const icon = liveNow.find(r => r.artworkUrl100)?.artworkUrl100 || null;
                     const keyDoc = m.id ? `id:${m.id}` : `bid:${m.bundleId}`;
 
-                    // Post LIVE to UPDATES channel (with ping if configured), mark announced, then stop monitoring
+                    // Post LIVE to UPDATES (with ping if configured)
                     await postToWebhook(getUpdatesWebhook(), { text: liveMessage(name, link), icon, ping: true });
+
+                    // Mark announced with month + uploader (if known from monitor)
                     await db.collection("announcedApps").doc(keyDoc).set({
                         id: m.id || null,
                         bundleId: m.bundleId || null,
                         name,
                         link,
+                        uploader: (m.source && m.source.user) || null, // Slack user id
+                        announcedMonth: monthStampTunis(new Date()),
                         announcedAt: admin.firestore.FieldValue.serverTimestamp(),
                     }, { merge: true });
+
                     await doc.ref.delete();
                 }
             } catch (err) {
@@ -326,7 +367,7 @@ exports.slackEvents = functions
             const ev = body.event || {};
             const db = admin.firestore();
 
-            // Optional: only accept messages from ONE submit channel
+            // Only accept messages from the configured submit channel (optional)
             const onlyChannel = getSubmitChannelId();
             if (onlyChannel && ev.channel && ev.channel !== onlyChannel) {
                 return res.status(200).send("ignored-other-channel");
@@ -364,7 +405,7 @@ exports.slackEvents = functions
                 const id = parsed.id;
                 const keyDoc = `id:${id}`;
 
-                // 2) If already announced before → warn, do nothing
+                // 2) Already announced?
                 const announced = await db.collection("announcedApps").doc(keyDoc).get();
                 if (announced.exists) {
                     const d = announced.data() || {};
@@ -375,7 +416,7 @@ exports.slackEvents = functions
                     return res.status(200).send("already-announced");
                 }
 
-                // 3) If already subscribed (monitor exists) → warn, do nothing
+                // 3) Already subscribed?
                 const monRef = db.collection("appMonitors").doc(keyDoc);
                 const monSnap = await monRef.get();
                 if (monSnap.exists) {
@@ -392,7 +433,7 @@ exports.slackEvents = functions
                 const liveNow = data.results.filter(r => r.live);
 
                 if (liveNow.length > 0) {
-                    // Already live -> announce in UPDATES channel (with ping), mark announced, short ack in SUBMIT
+                    // Already live -> announce in UPDATES (with ping), mark announced, ack in SUBMIT
                     const name = liveNow[0].trackName || id;
                     const link = liveNow.find(r => r.viewUrl)?.viewUrl || fallbackStoreLink({ id });
                     const icon = liveNow.find(r => r.artworkUrl100)?.artworkUrl100 || null;
@@ -403,6 +444,8 @@ exports.slackEvents = functions
                         bundleId: null,
                         name,
                         link,
+                        uploader: ev.user || null, // Slack user id
+                        announcedMonth: monthStampTunis(new Date()),
                         announcedAt: admin.firestore.FieldValue.serverTimestamp(),
                         source: { channel: ev.channel, immediate: true },
                     }, { merge: true });
@@ -435,4 +478,133 @@ exports.slackEvents = functions
         }
 
         return res.status(200).send("ignored");
+    });
+
+/* ===================================== Reports ===================================== */
+// Build Slack-friendly report text for monthStamp "YYYY-MM"
+// Uses Firestore index (announcedMonth == monthStamp, orderBy announcedAt asc)
+async function buildMonthlyReport(monthStamp) {
+    const db = admin.firestore();
+    const q = await db.collection("announcedApps")
+        .where("announcedMonth", "==", monthStamp)
+        .orderBy("announcedAt", "asc")
+        .get();
+
+    const games = [];
+    const perUploader = new Map(); // userId -> count
+
+    q.forEach(doc => {
+        const d = doc.data() || {};
+        const id = d.id || d.bundleId || doc.id;
+        const name = d.name || id;
+        const link = d.link || (d.id ? fallbackStoreLink({ id: d.id }) : null);
+        const uploader = d.uploader || null; // Slack user id
+        const announcedAt = d.announcedAt ? d.announcedAt.toDate() : null;
+
+        games.push({ id, name, link, uploader, announcedAt });
+        if (uploader) perUploader.set(uploader, (perUploader.get(uploader) || 0) + 1);
+    });
+
+    const count = games.length;
+    const PER_GAME = 50;
+
+    const label = monthLabel(monthStamp);
+    const firstDay = `${monthStamp}-01`;
+    const [y, m] = monthStamp.split("-").map(Number);
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const lastStr = `${monthStamp}-${String(lastDay).padStart(2, "0")}`;
+
+    const header =
+        `📊 Monthly Report — ${label}\n\n` +
+        `**Overview**\n` +
+        `• Live launches: *${count}*\n` +
+        `• Period: ${firstDay}–${lastStr} (Africa/Tunis)\n`;
+
+    if (count === 0) {
+        return `${header}\nNo apps went LIVE this month. Paste App Store links in #app-checker-submit to subscribe.`;
+    }
+
+    // Per-person payout lines (uploaders + Abdelfatteh). No label line, no grand total.
+    const uploaderLines = [...perUploader.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([uid, c]) => `• <@${uid}> — ${c} game${c > 1 ? "s" : ""} → $${c * PER_GAME}`);
+    if (uploaderLines.length === 0) uploaderLines.push("• (no tagged uploaders yet)");
+
+    const abdName = getAbdUserId() ? `<@${getAbdUserId()}>` : "Abdelfatteh Adhadhi";
+    const abdLine = `• ${abdName} — ${count} × $${PER_GAME} → $${count * PER_GAME}`;
+
+    const payouts = `**Payouts**\n${uploaderLines.join("\n")}\n${abdLine}`;
+
+    // Detailed game list
+    const gamesBlock = games.map((g, idx) => {
+        const when = g.announcedAt ? dateStrTunis(g.announcedAt) : "—";
+        const who = g.uploader ? `<@${g.uploader}>` : "—";
+        const link = g.link ? `<${g.link}|App Store>` : "";
+        return `${idx + 1}) 🎮 *${g.name}* — ${link}\n   Submitted by ${who} • Announced: ${when} • ID: ${g.id}`;
+    }).join("\n");
+
+    return `${header}\n${payouts}\n\n**Games**\n${gamesBlock}`;
+}
+
+/* Slash command: /repport  (current month-to-date, ONLY in report channel) */
+exports.slackReportCommand = functions
+    .region("us-central1")
+    .https.onRequest(async (req, res) => {
+        if (!verifySlackSignature(req)) return res.status(401).send("bad signature");
+
+        // Slash commands send x-www-form-urlencoded
+        const body = querystring.parse(req.rawBody.toString("utf8"));
+        const command = body.command;
+        const channelId = body.channel_id;   // where the command was invoked
+        const onlyReportId = getReportChannelId();
+
+        if (command !== "/repport") {
+            return res.status(200).json({ response_type: "ephemeral", text: "Unknown command." });
+        }
+
+        // Enforce: only allowed in the configured report channel
+        if (onlyReportId && channelId !== onlyReportId) {
+            return res.status(200).json({
+                response_type: "ephemeral",
+                text: `❌ Please run /repport in <#${onlyReportId}>.`,
+            });
+        }
+
+        // 1) QUICK ACK (must be <3s)
+        res.status(200).json({
+            response_type: "ephemeral",
+            text: `🧾 Working on this month’s report… I’ll post it in <#${onlyReportId || "your-report-channel"}> shortly.`,
+        });
+
+        // 2) Do the work AFTER acknowledging to Slack
+        (async () => {
+            try {
+                const stamp = monthStampTunis(new Date());   // current month
+                const text = await buildMonthlyReport(stamp);
+                await postToWebhook(getReportWebhook(), { text, icon: null, ping: false });
+            } catch (err) {
+                // Best-effort error post to report channel
+                try {
+                    await postToWebhook(getReportWebhook(), {
+                        text: `⚠️ Report generation failed: ${String(err)}`,
+                        icon: null,
+                        ping: false
+                    });
+                } catch (_) { }
+            }
+        })();
+    });
+
+
+/* Daily cron near end of day; if it's the last day of month, post the monthly report */
+exports.monthlyReportCron = functions
+    .region("us-central1")
+    .pubsub.schedule("55 23 * * *")   // 23:55 every day
+    .timeZone("Africa/Tunis")
+    .onRun(async () => {
+        if (!isLastDayOfMonthTunis(new Date())) return null;
+        const stamp = monthStampTunis(new Date());
+        const text = await buildMonthlyReport(stamp);
+        await postToWebhook(getReportWebhook(), { text, icon: null, ping: false });
+        return null;
     });
