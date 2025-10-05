@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>App Checker Dashboard - Announced Games</title>
+
+    <meta name="description" content="Dashboard showing all announced games with their status, publication dates, and live status.">
+    <meta property="og:title" content="App Checker Dashboard">
+    <meta property="og:description" content="Dashboard showing all announced games with their status.">
+    <meta property="og:type" content="website">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://flagcdn.com" crossorigin>
+
+    <style>
+        /* NEW: ensure anything with `hidden` is actually hidden */
+        [hidden]{ display:none !important; }
+
+        :root {
+            --bg: #ffffff;
+            --fg: #111318;
+            --muted: #6b7280;
+            --line: #e5e7eb;
+            --accent: #111318;
+            --accent-contrast: #ffffff;
+            --radius: 12px;
+            --r-btn: 10px;
+            --s1: 6px;
+            --s2: 10px;
+            --s3: 16px;
+            --s4: 24px;
+            --shadow: 0 8px 28px rgba(20,20,20,.08);
+            --row-alt: #fafafa;
+            --focus: #7aa7ff;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --info: #3b82f6;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0b0c0e;
+                --fg: #f2f3f5;
+                --muted: #a7adbb;
+                --line: #1b1f24;
+                --accent: #3b82f6;
+                --accent-contrast: #ffffff;
+                --shadow: none;
+                --row-alt: #0f1216;
+            }
+        }
+
+        :root[data-theme="light"] {
+            --bg: #ffffff;
+            --fg: #111318;
+            --muted: #6b7280;
+            --line: #e5e7eb;
+            --accent: #111318;
+            --accent-contrast: #ffffff;
+            --shadow: 0 8px 28px rgba(20,20,20,.08);
+            --row-alt: #fafafa;
+        }
+
+        :root[data-theme="dark"] {
+            --bg: #0b0c0e;
+            --fg: #f2f3f5;
+            --muted: #a7adbb;
+            --line: #1b1f24;
+            --accent: #3b82f6;
+            --accent-contrast: #ffffff;
+            --shadow: none;
+            --row-alt: #0f1216;
+        }
+
+        html, body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--fg);
+        }
+
+        body { font: 14.5px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+        h1 { font-size: 22px; margin: 0 0 var(--s1); }
+        .muted { color: var(--muted); font-size: 12.5px; }
+
+        .container { max-width: 1200px; margin: var(--s4) auto; padding: 0 var(--s3); }
+        .nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s2); gap: 12px; }
+        .brand { display: flex; gap: 10px; align-items: center; min-width: 0; }
+        .logo { width: 22px; height: 22px; border-radius: 6px; display: inline-block; }
+        .nav-actions { display: flex; gap: 8px; align-items: center; }
+
+        .card { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: var(--s3); animation: cardIn .35s ease both; }
+        @keyframes cardIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+
+        .row { display: flex; gap: var(--s2); flex-wrap: wrap; align-items: center; }
+        .btn { padding: var(--s2) var(--s3); border-radius: var(--r-btn); border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px; transition: transform .1s ease, box-shadow .15s ease, filter .2s ease; cursor: pointer; text-decoration: none; display: inline-block; }
+        .btn.primary { background: var(--accent); color: var(--accent-contrast); border: 0; }
+        .btn.primary:hover { filter: brightness(0.95); }
+        .btn.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+        .btn:hover { transform: translateY(-1px) }
+        .btn:active { transform: translateY(0) scale(.98) }
+        .btn:disabled { opacity: .6; cursor: not-allowed; transform: none }
+        .btn:focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+        .icon-btn { padding: 8px 10px; border-radius: 999px; }
+
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--s3); margin-bottom: var(--s4); }
+        .stat-card { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s3); text-align: center; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+        .stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .stat-number { font-size: 28px; font-weight: 700; margin-bottom: var(--s1); }
+        .stat-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .stat-card.live .stat-number { color: var(--success); }
+        .stat-card.confirmed .stat-number { color: var(--info); }
+        .stat-card.terminated .stat-number { color: var(--error); }
+
+        .filters { display: flex; gap: var(--s2); flex-wrap: wrap; align-items: center; margin-bottom: var(--s3); }
+        .select { padding: var(--s2) var(--s3); border-radius: var(--r-btn); border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px; }
+        .select:focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+        .table-wrap { max-height: 70vh; overflow: auto; border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg); }
+        .grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr; align-items: center; min-height: 50px; gap: var(--s2); }
+        .t-head { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 2px solid var(--line); }
+        .t-head .cell { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: var(--s2) var(--s3); font-weight: 700; text-align: center; }
+        .t-rows .rowg { position: relative; animation: rise .35s ease both; transition: background-color 0.2s ease; }
+        .t-rows .rowg:hover { background: rgba(59, 130, 246, 0.05); }
+        .t-rows .rowg::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--line); }
+        .t-rows .rowg:nth-child(even) { background: var(--row-alt); }
+        .t-rows .rowg:nth-child(even):hover { background: rgba(59, 130, 246, 0.05); }
+        .cell { padding: var(--s2) var(--s3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; text-align: center; }
+        .cell.date { white-space: nowrap; font-size: 11px; }
+        .cell.status { text-align: center; }
+        .cell.game { text-align: left; }
+        @keyframes rise { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+
+        .app-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .app-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+        .app-id { color: var(--muted); font-size: 11px; }
+        .live-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; animation: pulse 2s infinite; }
+        .live-indicator.offline { background: #ef4444; animation: none; }
+        .live-indicator.checking { background: #f59e0b; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .app-link { color: var(--accent); text-decoration: none; font-size: 11px; }
+        .app-link:hover { text-decoration: underline; }
+
+        .status-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 700; padding: 4px 8px; border-radius: 999px; animation: pop .18s ease both; text-transform: uppercase; letter-spacing: 0.05em; }
+        .status-live { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
+        .status-terminated { background: rgba(239, 68, 68, 0.15); color: var(--error); border: 1px solid rgba(239, 68, 68, 0.3); }
+        .status-confirmed { background: rgba(59, 130, 246, 0.15); color: var(--info); border: 1px solid rgba(59, 130, 246, 0.3); }
+        .status-unknown { background: rgba(107, 114, 128, 0.15); color: var(--muted); border: 1px solid rgba(107, 114, 128, 0.3); }
+        @keyframes pop { from { transform: scale(.9); opacity: .6 } to { transform: scale(1); opacity: 1 } }
+
+        .date { color: var(--muted); font-size: 12px; }
+        .uploader { color: var(--muted); font-size: 12px; }
+
+        .spinner { width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg) } }
+
+        .empty { padding: var(--s4); border: 1px dashed var(--line); border-radius: var(--radius); color: var(--muted); text-align: center; }
+        .error { padding: var(--s3); background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: var(--radius); color: var(--error); margin-bottom: var(--s3); }
+
+        @media (prefers-reduced-motion:reduce) {
+            .spinner, .t-rows .rowg, .status-badge, .card { animation: none !important }
+            .btn { transition: none }
+        }
+
+        @media (max-width: 1200px) {
+            .grid { grid-template-columns: 1fr 1fr 1fr 1fr 1fr; }
+        }
+
+        @media (max-width: 1000px) {
+            .grid { grid-template-columns: 1fr 1fr 1fr 1fr 1fr; }
+            .filters { flex-direction: column; align-items: stretch; }
+            .filters .select, .filters .btn { width: 100%; }
+            .stats { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (max-width: 900px) {
+            .grid { grid-template-columns: 1fr 1fr 1fr 1fr 1fr; }
+        }
+
+        @media (max-width: 768px) {
+            .grid { grid-template-columns: 1fr 80px 90px; }
+            .cell:nth-child(3), .cell:nth-child(4), .t-head .cell:nth-child(3), .t-head .cell:nth-child(4) { display: none; }
+        }
+
+        @media (max-width: 600px) {
+            .stats { grid-template-columns: 1fr; }
+            .filters { gap: var(--s1); }
+            .filters label { font-size: 12px; }
+        }
+
+        /* Footer */
+        footer { margin-top: var(--s4); text-align: center; }
+        footer .credit { color: var(--muted); font-size: 12.5px; }
+        footer .credit a { color: #1a73e8; text-decoration: none; }
+        footer .credit a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <div class="brand">
+                <img class="logo" src="/favicon.svg" alt="">
+                <div>
+                    <strong>App Checker Dashboard</strong><br />
+                    <span class="muted">Announced Games Status</span>
+                </div>
+            </div>
+            <div class="nav-actions">
+                <button type="button" id="themeBtn" class="btn secondary icon-btn" title="Toggle theme">🌓</button>
+            </div>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="totalGames">-</div>
+                <div class="stat-label">Total Games</div>
+            </div>
+            <div class="stat-card live">
+                <div class="stat-number" id="liveGames">-</div>
+                <div class="stat-label">Currently Live</div>
+            </div>
+            <div class="stat-card confirmed">
+                <div class="stat-number" id="confirmedGames">-</div>
+                <div class="stat-label">Confirmed (3+ weeks)</div>
+            </div>
+            <div class="stat-card terminated">
+                <div class="stat-number" id="terminatedGames">-</div>
+                <div class="stat-label">Terminated</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="filters">
+                <label for="statusFilter">Status:</label>
+                <select id="statusFilter" class="select">
+                    <option value="">All Status</option>
+                    <option value="live">Live</option>
+                    <option value="confirmed">Confirmed</option>
+                    <option value="terminated">Terminated</option>
+                </select>
+                
+                <label for="monthFilter">Month:</label>
+                <select id="monthFilter" class="select">
+                    <option value="">All Months</option>
+                </select>
+                
+                <label for="sortBy">Sort by:</label>
+                <select id="sortBy" class="select">
+                    <option value="announcedAt">Announcement Date</option>
+                    <option value="name">Game Name</option>
+                    <option value="status">Status</option>
+                </select>
+                
+                <button id="refreshBtn" class="btn primary">Refresh</button>
+            </div>
+
+            <div id="error" class="error" style="display:none"></div>
+            <div id="loading" class="spinner" style="display:none; margin: var(--s3) auto;"></div>
+
+            <div class="table-wrap" style="margin-top: var(--s2)">
+                <div id="results"></div>
+            </div>
+        </div>
+
+        <!-- Footer credit -->
+        <footer>
+            <p class="credit">
+                Created by <strong>Meher Davanci</strong> —
+                <a href="https://x.com/DavanciInk" target="_blank" rel="noopener">@DavanciInk</a> — 2025
+            </p>
+        </footer>
+    </div>
+
+    <script>
+        const API_URL = "/getAnnouncedGames";
+        let allGames = [];
+        let filteredGames = [];
+        let availableMonths = [];
+        let liveStatusCache = new Map();
+
+        (function addSrOnly() {
+            const style = document.createElement('style');
+            style.textContent = `.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}`;
+            document.head.appendChild(style);
+        })();
+
+        const root = document.documentElement;
+        const savedTheme = localStorage.getItem("theme");
+        if (savedTheme === "light" || savedTheme === "dark") root.setAttribute("data-theme", savedTheme);
+        
+        function toggleTheme() {
+            const now = root.getAttribute("data-theme");
+            const next = now === "dark" ? "light" : "dark";
+            root.setAttribute("data-theme", next);
+            localStorage.setItem("theme", next);
+            const btn = document.getElementById("themeBtn");
+            btn.style.transition = "transform .5s ease";
+            btn.style.transform = "rotate(180deg)";
+            setTimeout(() => btn.style.transform = "", 520);
+        }
+
+        function formatDate(dateString) {
+            if (!dateString) return "—";
+            const date = new Date(dateString);
+            return date.toLocaleDateString("en-US", { 
+                month: "short", 
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: true
+            });
+        }
+
+        function getStatusBadgeClass(status) {
+            switch (status) {
+                case "live": return "status-live";
+                case "confirmed": return "status-confirmed";
+                case "terminated": return "status-terminated";
+                default: return "status-unknown";
+            }
+        }
+
+        function getStatusText(status) {
+            switch (status) {
+                case "live": return "LIVE";
+                case "confirmed": return "CONFIRMED";
+                case "terminated": return "TERMINATED";
+                default: return "UNKNOWN";
+            }
+        }
+
+        function getLiveIndicatorClass(game) {
+            if (game.status === 'terminated') {
+                return 'offline';
+            } else if (game.status === 'confirmed') {
+                // For confirmed games, check cache or default to checking
+                const isLive = liveStatusCache.get(game.id);
+                if (isLive === true) return 'live';
+                if (isLive === false) return 'offline';
+                return 'checking';
+            } else if (game.status === 'live') {
+                return 'live';
+            }
+            return 'offline';
+        }
+
+        function renderStats() {
+            const total = allGames.length;
+            const live = allGames.filter(g => g.status === "live").length;
+            const confirmed = allGames.filter(g => g.status === "confirmed").length;
+            const terminated = allGames.filter(g => g.status === "terminated").length;
+
+            document.getElementById("totalGames").textContent = total;
+            document.getElementById("liveGames").textContent = live;
+            document.getElementById("confirmedGames").textContent = confirmed;
+            document.getElementById("terminatedGames").textContent = terminated;
+        }
+
+        function populateMonthFilter() {
+            const monthFilter = document.getElementById("monthFilter");
+            const months = [...new Set(allGames.map(g => g.announcedMonth).filter(Boolean))].sort().reverse();
+            availableMonths = months;
+            
+            // Clear existing options except "All Months"
+            monthFilter.innerHTML = '<option value="">All Months</option>';
+            
+            months.forEach(month => {
+                const option = document.createElement("option");
+                option.value = month;
+                option.textContent = formatMonthLabel(month);
+                monthFilter.appendChild(option);
+            });
+        }
+
+        function formatMonthLabel(monthStamp) {
+            if (!monthStamp) return "Unknown";
+            const [year, month] = monthStamp.split("-").map(Number);
+            const date = new Date(year, month - 1, 1);
+            return date.toLocaleString("en-US", { month: "long", year: "numeric" });
+        }
+
+        function renderTable() {
+            const results = document.getElementById("results");
+            
+            if (filteredGames.length === 0) {
+                results.innerHTML = `<div class="empty">No games found matching the current filter.</div>`;
+                return;
+            }
+
+            const rows = filteredGames.map((game, i) => `
+                <div class="rowg grid" role="row" style="--i:${i}" data-game-id="${game.id}">
+                    <div class="cell game" role="cell">
+                        <div class="app-info">
+                            <div class="app-name">
+                                <span class="live-indicator ${getLiveIndicatorClass(game)}"></span>
+                                ${game.name}
+                            </div>
+                            <div class="app-id">ID: ${game.id}</div>
+                            ${game.link ? `<a href="${game.link}" target="_blank" rel="noopener" class="app-link">View on App Store</a>` : ''}
+                        </div>
+                    </div>
+                    <div class="cell status" role="cell">
+                        <span class="status-badge ${getStatusBadgeClass(game.status)}">
+                            ${getStatusText(game.status)}
+                        </span>
+                    </div>
+                    <div class="cell date" role="cell">
+                        <div class="date">${formatDate(game.announcedAt)}</div>
+                    </div>
+                    <div class="cell date" role="cell">
+                        <div class="date">${formatDate(game.firstLiveAt)}</div>
+                    </div>
+                    <div class="cell date" role="cell">
+                        <div class="date">${formatDate(game.lastCheckedAt)}</div>
+                    </div>
+                </div>
+            `).join('');
+
+            results.innerHTML = `
+                <div class="t-head grid" role="rowgroup">
+                    <div class="cell">Game</div>
+                    <div class="cell">Status</div>
+                    <div class="cell">Announced</div>
+                    <div class="cell">First Live</div>
+                    <div class="cell">Last Checked</div>
+                </div>
+                <div class="t-rows" role="rowgroup">${rows}</div>
+            `;
+        }
+
+        function filterAndSort() {
+            const statusFilter = document.getElementById("statusFilter").value;
+            const monthFilter = document.getElementById("monthFilter").value;
+            const sortBy = document.getElementById("sortBy").value;
+
+            filteredGames = allGames.filter(game => {
+                const statusMatch = !statusFilter || game.status === statusFilter;
+                const monthMatch = !monthFilter || game.announcedMonth === monthFilter;
+                return statusMatch && monthMatch;
+            });
+
+            filteredGames.sort((a, b) => {
+                switch (sortBy) {
+                    case "name":
+                        return a.name.localeCompare(b.name);
+                    case "status":
+                        return a.status.localeCompare(b.status);
+                    case "announcedAt":
+                    default:
+                        return new Date(b.announcedAt || 0) - new Date(a.announcedAt || 0);
+                }
+            });
+
+            renderTable();
+        }
+
+        function showError(message, type = "error") {
+            const errorEl = document.getElementById("error");
+            errorEl.textContent = message;
+            errorEl.style.display = "block";
+            
+            if (type === "success") {
+                errorEl.style.background = "rgba(16, 185, 129, 0.1)";
+                errorEl.style.borderColor = "rgba(16, 185, 129, 0.2)";
+                errorEl.style.color = "var(--success)";
+            } else {
+                errorEl.style.background = "rgba(239, 68, 68, 0.1)";
+                errorEl.style.borderColor = "rgba(239, 68, 68, 0.2)";
+                errorEl.style.color = "var(--error)";
+            }
+        }
+
+        function hideError() {
+            document.getElementById("error").style.display = "none";
+        }
+
+
+        async function loadGames() {
+            const loading = document.getElementById("loading");
+            const results = document.getElementById("results");
+            
+            loading.style.display = "block";
+            results.innerHTML = "";
+            hideError();
+
+            try {
+                const response = await fetch(API_URL);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+
+                allGames = data.games || [];
+                populateMonthFilter();
+                filterAndSort();
+                renderStats();
+                
+                // Check live status for confirmed games
+                await checkConfirmedGamesLiveStatus();
+
+            } catch (error) {
+                console.error("Error loading games:", error);
+                showError("Failed to load games: " + error.message);
+                results.innerHTML = `<div class="empty">Error loading data. Please try again.</div>`;
+            } finally {
+                loading.style.display = "none";
+            }
+        }
+
+        async function checkConfirmedGamesLiveStatus() {
+            const confirmedGames = allGames.filter(game => game.status === 'confirmed');
+            
+            for (const game of confirmedGames) {
+                const gameKey = game.id;
+                if (!liveStatusCache.has(gameKey)) {
+                    // Set checking state
+                    updateLiveIndicator(gameKey, 'checking');
+                    
+                    try {
+                        const isLive = await checkGameLiveStatus(game);
+                        liveStatusCache.set(gameKey, isLive);
+                        updateLiveIndicator(gameKey, isLive ? 'live' : 'offline');
+                    } catch (error) {
+                        console.error(`Error checking live status for ${game.name}:`, error);
+                        updateLiveIndicator(gameKey, 'offline');
+                    }
+                } else {
+                    // Use cached result
+                    const isLive = liveStatusCache.get(gameKey);
+                    updateLiveIndicator(gameKey, isLive ? 'live' : 'offline');
+                }
+            }
+        }
+
+        async function checkGameLiveStatus(game) {
+            try {
+                const response = await fetch('/checkAppStatus', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: game.id,
+                        bundleId: game.bundleId
+                    })
+                });
+                const data = await response.json();
+                return data.ok && data.isLive;
+            } catch (error) {
+                console.error('Error checking game live status:', error);
+                return false;
+            }
+        }
+
+        function updateLiveIndicator(gameKey, status) {
+            const gameElement = document.querySelector(`[data-game-id="${gameKey}"]`);
+            if (gameElement) {
+                const indicator = gameElement.querySelector('.live-indicator');
+                if (indicator) {
+                    indicator.className = `live-indicator ${status}`;
+                }
+            }
+        }
+
+        // Event listeners
+        document.getElementById("themeBtn").addEventListener("click", toggleTheme);
+        document.getElementById("refreshBtn").addEventListener("click", loadGames);
+        document.getElementById("statusFilter").addEventListener("change", filterAndSort);
+        document.getElementById("monthFilter").addEventListener("change", filterAndSort);
+        document.getElementById("sortBy").addEventListener("change", filterAndSort);
+
+        // Load data on page load
+        loadGames();
+    </script>
+</body>
+</html>

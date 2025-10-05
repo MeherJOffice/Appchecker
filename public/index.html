@@ -14,6 +14,9 @@
     <link rel="preconnect" href="https://flagcdn.com" crossorigin>
 
     <style>
+        /* NEW: ensure anything with `hidden` is actually hidden */
+        [hidden]{ display:none !important; }
+
         :root {
             --bg: #ffffff;
             --fg: #111318;
@@ -77,436 +80,102 @@
             color: var(--fg);
         }
 
-        body {
-            font: 14.5px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+        body { font: 14.5px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+        h1 { font-size: 22px; margin: 0 0 var(--s1); }
+        .muted { color: var(--muted); font-size: 12.5px; }
+
+        .container { max-width: 980px; margin: var(--s4) auto; padding: 0 var(--s3); }
+        .nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s2); gap: 12px; }
+        .brand { display: flex; gap: 10px; align-items: center; min-width: 0; }
+        .logo { width: 22px; height: 22px; border-radius: 6px; display: inline-block; }
+        .nav-actions { display: flex; gap: 8px; align-items: center; }
+
+        .card { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: var(--s3); animation: cardIn .35s ease both; }
+        @keyframes cardIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+
+        .row { display: flex; gap: var(--s2); flex-wrap: wrap; align-items: center; }
+        .input, .select, .btn { padding: var(--s2) var(--s3); border-radius: var(--r-btn); border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px; transition: transform .1s ease, box-shadow .15s ease, filter .2s ease; }
+        .input::placeholder { color: #9aa1ab; }
+        .btn { cursor: pointer; }
+        .btn.primary { background: var(--accent); color: var(--accent-contrast); border: 0; }
+        .btn.primary:hover { filter: brightness(0.95); }
+        .btn.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+        .btn:hover { transform: translateY(-1px) }
+        .btn:active { transform: translateY(0) scale(.98) }
+        .btn:disabled { opacity: .6; cursor: not-allowed; transform: none }
+        .input:focus, .select:focus, .btn:focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+        .icon-btn { padding: 8px 10px; border-radius: 999px; }
+
+        .toolbar { display: flex; gap: var(--s2); flex-wrap: wrap; align-items: center; justify-content: space-between; margin-top: var(--s2); }
+        .toolbar-left, .toolbar-right { display: flex; gap: var(--s2); align-items: center; }
+
+        /* NEW: live-since chip */
+        #appHeaderMeta{ display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; margin-top: var(--s2); }
+        .chip-live{ display:inline-flex; align-items:center; gap:.5rem; padding:.35rem .6rem; border-radius:999px; font-size:.85rem; font-weight:600; background:#e6f9ec; color:#106a2a; }
+        @media (prefers-color-scheme: dark) {
+          .chip-live{ background:#0f2a19; color:#7be09b; }
         }
+        .chip-live .dot{ width:.55rem; height:.55rem; border-radius:999px; background:#16a34a; }
+        .chip-live .days{ opacity:.8; font-weight:500; }
 
-        h1 {
-            font-size: 22px;
-            margin: 0 0 var(--s1);
-        }
+        .table-wrap { max-height: 70vh; overflow: auto; border-radius: var(--radius); }
+        .grid { display: grid; grid-template-columns: var(--col1) var(--col2) 1fr var(--col4) var(--col5); align-items: center; }
+        .t-head { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line); }
+        .t-head .cell { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); padding: var(--s3); }
+        .t-head .cell.app { text-align: center; }
+        .t-rows .rowg { position: relative; animation: rise .35s ease both; }
+        .t-rows .rowg::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--line); }
+        .t-rows .rowg:nth-child(even) { background: var(--row-alt); }
+        .cell { padding: var(--s3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        @keyframes rise { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
 
-        .muted {
-            color: var(--muted);
-            font-size: 12.5px;
-        }
+        .country { display: flex; align-items: center; gap: 10px }
+        .flag { width: 20px; height: 14px; border-radius: 2px; box-shadow: 0 0 0 1px var(--line) inset; flex: 0 0 auto }
+        .appcell { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 0; }
+        .apptext { text-align: center; min-width: 0; }
+        .icon { width: 40px; height: 40px; border-radius: 8px; background: #d1d5db; object-fit: cover; flex: 0 0 auto; display: block }
+        .icon.missing { background: transparent; color: var(--muted); }
+        .appname { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .seller { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .since { color: var(--muted); font-size: 12px; } /* NEW: per-row "since ..." */
 
-        .container {
-            max-width: 980px;
-            margin: var(--s4) auto;
-            padding: 0 var(--s3);
-        }
+        .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 4px 8px; border-radius: 999px; animation: pop .18s ease both; }
+        .ok { background: rgba(14,138,62,.12); color: #0e8a3e; }
+        .bad { background: rgba(198,40,40,.12); color: #c62828; }
+        .warn { background: rgba(142,36,170,.12); color: #8e24aa; }
+        @keyframes pop { from { transform: scale(.9); opacity: .6 } to { transform: scale(1); opacity: 1 } }
 
-        .nav {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: var(--s2);
-            gap: 12px;
-        }
+        .spinner { width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg) } }
 
-        .brand {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            min-width: 0;
-        }
-
-        .logo {
-            width: 22px;
-            height: 22px;
-            border-radius: 6px;
-            display: inline-block;
-        }
-
-        .nav-actions {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-
-        .card {
-            background: var(--bg);
-            border: 1px solid var(--line);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
-            padding: var(--s3);
-            animation: cardIn .35s ease both;
-        }
-
-        @keyframes cardIn {
-            from {
-                opacity: 0;
-                transform: translateY(6px)
-            }
-
-            to {
-                opacity: 1;
-                transform: none
-            }
-        }
-
-        .row {
-            display: flex;
-            gap: var(--s2);
-            flex-wrap: wrap;
-            align-items: center;
-        }
-
-        .input, .select, .btn {
-            padding: var(--s2) var(--s3);
-            border-radius: var(--r-btn);
-            border: 1px solid var(--line);
-            background: var(--bg);
-            color: var(--fg);
-            font-size: 14px;
-            transition: transform .1s ease, box-shadow .15s ease, filter .2s ease;
-        }
-
-            .input::placeholder {
-                color: #9aa1ab;
-            }
-
-        .btn {
-            cursor: pointer;
-        }
-
-            .btn.primary {
-                background: var(--accent);
-                color: var(--accent-contrast);
-                border: 0;
-            }
-
-                .btn.primary:hover {
-                    filter: brightness(0.95);
-                }
-
-            .btn.secondary {
-                background: transparent;
-                color: var(--fg);
-                border: 1px solid var(--line);
-            }
-
-            .btn:hover {
-                transform: translateY(-1px)
-            }
-
-            .btn:active {
-                transform: translateY(0) scale(.98)
-            }
-
-            .btn:disabled {
-                opacity: .6;
-                cursor: not-allowed;
-                transform: none
-            }
-
-            .input:focus, .select:focus, .btn:focus {
-                outline: 2px solid var(--focus);
-                outline-offset: 2px;
-            }
-
-        .icon-btn {
-            padding: 8px 10px;
-            border-radius: 999px;
-        }
-
-        .toolbar {
-            display: flex;
-            gap: var(--s2);
-            flex-wrap: wrap;
-            align-items: center;
-            justify-content: space-between;
-            margin-top: var(--s2);
-        }
-
-        .toolbar-left, .toolbar-right {
-            display: flex;
-            gap: var(--s2);
-            align-items: center;
-        }
-
-        .table-wrap {
-            max-height: 70vh;
-            overflow: auto;
-            border-radius: var(--radius);
-        }
-
-        .grid {
-            display: grid;
-            grid-template-columns: var(--col1) var(--col2) 1fr var(--col4) var(--col5);
-            align-items: center;
-        }
-
-        .t-head {
-            position: sticky;
-            top: 0;
-            z-index: 1;
-            background: var(--bg);
-            border-bottom: 1px solid var(--line);
-        }
-
-            .t-head .cell {
-                font-size: 12px;
-                letter-spacing: .04em;
-                text-transform: uppercase;
-                color: var(--muted);
-                padding: var(--s3);
-            }
-
-                .t-head .cell.app {
-                    text-align: center;
-                }
-
-        .t-rows .rowg {
-            position: relative;
-            animation: rise .35s ease both;
-        }
-
-            .t-rows .rowg::after {
-                content: "";
-                position: absolute;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                height: 1px;
-                background: var(--line);
-            }
-
-            .t-rows .rowg:nth-child(even) {
-                background: var(--row-alt);
-            }
-
-        .cell {
-            padding: var(--s3);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        @keyframes rise {
-            from {
-                opacity: 0;
-                transform: translateY(6px)
-            }
-
-            to {
-                opacity: 1;
-                transform: none
-            }
-        }
-
-        .country {
-            display: flex;
-            align-items: center;
-            gap: 10px
-        }
-
-        .flag {
-            width: 20px;
-            height: 14px;
-            border-radius: 2px;
-            box-shadow: 0 0 0 1px var(--line) inset;
-            flex: 0 0 auto
-        }
-
-        .appcell {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            min-width: 0;
-        }
-
-        .apptext {
-            text-align: center;
-            min-width: 0;
-        }
-
-        .icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 8px;
-            background: #d1d5db;
-            object-fit: cover;
-            flex: 0 0 auto;
-            display: block
-        }
-
-            .icon.missing {
-                background: transparent;
-                color: var(--muted);
-            }
-
-        .appname {
-            font-weight: 700;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .seller {
-            color: var(--muted);
-            font-size: 12.5px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 12px;
-            font-weight: 600;
-            padding: 4px 8px;
-            border-radius: 999px;
-            animation: pop .18s ease both;
-        }
-
-        .ok {
-            background: rgba(14,138,62,.12);
-            color: #0e8a3e;
-        }
-
-        .bad {
-            background: rgba(198,40,40,.12);
-            color: #c62828;
-        }
-
-        .warn {
-            background: rgba(142,36,170,.12);
-            color: #8e24aa;
-        }
-
-        @keyframes pop {
-            from {
-                transform: scale(.9);
-                opacity: .6
-            }
-
-            to {
-                transform: scale(1);
-                opacity: 1
-            }
-        }
-
-        .spinner {
-            width: 16px;
-            height: 16px;
-            border: 2px solid var(--line);
-            border-top-color: var(--accent);
-            border-radius: 50%;
-            animation: spin .6s linear infinite;
-        }
-
-        @keyframes spin {
-            to {
-                transform: rotate(360deg)
-            }
-        }
-
-        .skeleton {
-            height: 12px;
-            border-radius: 6px;
-            background: linear-gradient(90deg,#e9ecef00,#e9ecef66,#e9ecef00);
-            animation: sk 1.2s infinite;
-        }
-
-        @keyframes sk {
-            0% {
-                background-position: -200px 0
-            }
-
-            100% {
-                background-position: 200px 0
-            }
-        }
+        .skeleton { height: 12px; border-radius: 6px; background: linear-gradient(90deg,#e9ecef00,#e9ecef66,#e9ecef00); animation: sk 1.2s infinite; }
+        @keyframes sk { 0% { background-position: -200px 0 } 100% { background-position: 200px 0 } }
 
         @media (prefers-reduced-motion:reduce) {
-            .spinner, .skeleton, .t-rows .rowg, .badge, .card {
-                animation: none !important
-            }
-
-            .btn {
-                transition: none
-            }
+            .spinner, .skeleton, .t-rows .rowg, .badge, .card { animation: none !important }
+            .btn { transition: none }
         }
 
-        .empty {
-            padding: var(--s3);
-            border: 1px dashed var(--line);
-            border-radius: var(--radius);
-            color: var(--muted)
-        }
-
-        a {
-            color: #1a73e8;
-            text-decoration: underline
-        }
-
-            a:focus {
-                outline: 2px solid var(--focus);
-                outline-offset: 2px
-            }
+        .empty { padding: var(--s3); border: 1px dashed var(--line); border-radius: var(--radius); color: var(--muted) }
+        a { color: #1a73e8; text-decoration: underline }
+        a:focus { outline: 2px solid var(--focus); outline-offset: 2px }
 
         @media (max-width:700px) {
-            :root {
-                --col4: 0px;
-                --col5: 0px;
-            }
-
-            .cell.col4, .cell.col5, .t-head .cell.col4, .t-head .cell.col5 {
-                display: none;
-            }
-
-            .controls {
-                flex-direction: column;
-                align-items: stretch;
-            }
-
-                .controls .input, .controls .select, .controls .btn {
-                    width: 100%;
-                }
-
-            .toolbar {
-                flex-direction: column;
-                align-items: stretch;
-                gap: 12px;
-            }
-
-            .toolbar-left {
-                justify-content: space-between;
-            }
-
-            .toolbar-right {
-                width: 100%;
-            }
-
-                .toolbar-right .btn {
-                    width: 100%;
-                }
+            :root { --col4: 0px; --col5: 0px; }
+            .cell.col4, .cell.col5, .t-head .cell.col4, .t-head .cell.col5 { display: none; }
+            .controls { flex-direction: column; align-items: stretch; }
+            .controls .input, .controls .select, .controls .btn { width: 100%; }
+            .toolbar { flex-direction: column; align-items: stretch; gap: 12px; }
+            .toolbar-left { justify-content: space-between; }
+            .toolbar-right { width: 100%; }
+            .toolbar-right .btn { width: 100%; }
         }
 
         /* Footer */
-        footer {
-            margin-top: var(--s3);
-            text-align: center;
-        }
-
-            footer .credit {
-                color: var(--muted);
-                font-size: 12.5px;
-            }
-
-                footer .credit a {
-                    color: #1a73e8;
-                    text-decoration: none;
-                }
-
-                    footer .credit a:hover {
-                        text-decoration: underline;
-                    }
+        footer { margin-top: var(--s3); text-align: center; }
+        footer .credit { color: var(--muted); font-size: 12.5px; }
+        footer .credit a { color: #1a73e8; text-decoration: none; }
+        footer .credit a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -519,9 +188,9 @@
                     <span class="muted">Quickly see where your iOS app is live</span>
                 </div>
             </div>
-            <div class="nav-actions">
-                <button type="button" id="themeBtn" class="btn secondary icon-btn" title="Toggle theme">🌓</button>
-            </div>
+        <div class="nav-actions">
+            <button type="button" id="themeBtn" class="btn secondary icon-btn" title="Toggle theme">🌓</button>
+        </div>
         </div>
 
         <main class="card" role="main">
@@ -553,6 +222,15 @@
                 <div class="toolbar-right">
                     <button type="button" id="copyLinkBtn" class="btn secondary">Copy share link</button>
                 </div>
+            </div>
+
+            <!-- NEW: header chip (hidden until after a successful check) -->
+            <div id="appHeaderMeta">
+                <span id="liveSinceChip" class="chip-live" hidden>
+                    <span class="dot" aria-hidden="true"></span>
+                    <span>LIVE SINCE <time id="liveSinceDate" datetime=""></time></span>
+                    <span id="liveSinceDays" class="days"></span>
+                </span>
             </div>
 
             <div id="alert" class="empty" style="display:none"></div>
@@ -624,6 +302,39 @@
             </svg>`;
         }
 
+        /* ====== NEW: live-since helpers ====== */
+        function parseIsoSafe(d){ try{ return d ? new Date(d) : null; }catch(_){ return null; } }
+        function daysBetweenUtc(a,b){
+            if(!a||!b) return null;
+            const A = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
+            const B = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
+            return Math.max(0, Math.floor((B - A) / 86400000));
+        }
+        function getLiveSinceFromResults(results){
+            const live = (results||[]).filter(r => r && r.live);
+            if(!live.length) return null;
+            let dates = live.map(r => parseIsoSafe(r.currentVersionReleaseDate)).filter(Boolean);
+            if(dates.length === 0) dates = live.map(r => parseIsoSafe(r.releaseDate)).filter(Boolean);
+            if(dates.length === 0) return null;
+            dates.sort((a,b)=>a-b);
+            const first = dates[0];
+            return { date:first, dateStr:first.toISOString().slice(0,10), days:daysBetweenUtc(first,new Date()) };
+        }
+        function renderLiveSinceBadge(results){
+            const chip = document.getElementById('liveSinceChip');
+            const dateEl = document.getElementById('liveSinceDate');
+            const daysEl = document.getElementById('liveSinceDays');
+            if(!chip || !dateEl || !daysEl) return;
+            const meta = results ? getLiveSinceFromResults(results) : null;
+            if(!meta){ chip.hidden = true; return; }
+            dateEl.textContent = meta.dateStr;
+            dateEl.setAttribute('datetime', meta.date.toISOString());
+            daysEl.textContent = `(${meta.days} day${meta.days===1?'':'s'})`;
+            chip.hidden = false;
+        }
+        // Hide chip on first load
+        (() => { const chip=document.getElementById('liveSinceChip'); if(chip) chip.hidden=true; })();
+
         function sortResults(list) {
             if (currentSort === "country") {
                 return [...list].sort((a, b) => a.country.localeCompare(b.country));
@@ -671,10 +382,20 @@
                     const seller = r.sellerName ? `<div class="seller">${r.sellerName}</div>` : '';
                     const icon = r.artworkUrl100 ? `<img class="icon" src="${r.artworkUrl100}" alt="">` : notFoundIcon();
                     const link = r.viewUrl ? `<a href="${r.viewUrl}" target="_blank" rel="noopener">Open</a>` : '';
+
+                    /* NEW: per-row "since YYYY-MM-DD (Nd)" */
+                    let sinceHtml = '';
+                    const d = parseIsoSafe(r.currentVersionReleaseDate) || parseIsoSafe(r.releaseDate);
+                    if (d) {
+                        const dstr = d.toISOString().slice(0,10);
+                        const days = daysBetweenUtc(d, new Date());
+                        sinceHtml = `<div class="since">since ${dstr} (${days}d)</div>`;
+                    }
+
                     return `<div class="rowg grid" role="row" style="--i:${i}">
                 <div class="cell country" role="cell">${flag} ${r.country.toUpperCase()}</div>
                 <div class="cell" role="cell"><span class="badge ok">LIVE</span></div>
-                <div class="cell appcell" role="cell">${icon}<div class="apptext"><div class="appname">${name}</div>${seller}</div></div>
+                <div class="cell appcell" role="cell">${icon}<div class="apptext"><div class="appname">${name}</div>${seller}${sinceHtml}</div></div>
                 <div class="cell col4" role="cell">${r.version || ''}</div>
                 <div class="cell col5" role="cell">${link}</div>
               </div>`;
@@ -721,6 +442,9 @@
             const status = document.getElementById("status");
             const results = document.getElementById("results");
 
+            // NEW: hide the header chip while checking (or if input invalid)
+            renderLiveSinceBadge(null);
+
             const input = document.getElementById("appInput").value;
             const mode = document.getElementById("mode").value;
 
@@ -735,6 +459,7 @@
                 results.innerHTML = "";
                 status.textContent = "";
                 busy.style.display = "none";
+                renderLiveSinceBadge(null); // keep hidden on invalid input
                 showAlert("Please provide a valid App Store link, App ID, or Bundle ID.");
                 return;
             }
@@ -750,6 +475,7 @@
                 if (!res.ok) {
                     results.innerHTML = "";
                     status.textContent = "";
+                    renderLiveSinceBadge(null); // hide on server error
                     showAlert("Server error: " + (data.error || res.status));
                     return;
                 }
@@ -757,9 +483,13 @@
                 lastData = data;
                 status.innerHTML = `Checked <b>${data.query.count}</b> countries — Live: <b>${data.summary.liveCount}</b>, Not live: <b>${data.summary.notLiveCount}</b>, Errors: <b>${data.summary.errorCount}</b>`;
                 results.innerHTML = renderGrid(data);
+
+                // NEW: show chip after a successful check when there’s at least 1 live storefront
+                renderLiveSinceBadge(data.results);
             } catch (e) {
                 results.innerHTML = "";
                 status.textContent = "";
+                renderLiveSinceBadge(null); // hide on fetch error
                 showAlert("Request failed: " + e.message);
             } finally {
                 busy.style.display = "none";

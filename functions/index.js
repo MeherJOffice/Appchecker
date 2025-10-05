@@ -320,6 +320,22 @@ exports.monitorApps = functions
                         announcedAt: admin.firestore.FieldValue.serverTimestamp(),
                     }, { merge: true });
 
+                    // Start tracking this app for daily monitoring
+                    await db.collection("trackedApps").doc(keyDoc).set({
+                        id: m.id || null,
+                        bundleId: m.bundleId || null,
+                        name,
+                        link,
+                        uploader: (m.source && m.source.user) || null,
+                        firstLiveAt: admin.firestore.FieldValue.serverTimestamp(),
+                        lastCheckedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        status: "live", // live, terminated, confirmed
+                        terminationDate: null,
+                        confirmationDate: null,
+                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    }, { merge: true });
+
                     await doc.ref.delete();
                 }
             } catch (err) {
@@ -450,6 +466,22 @@ exports.slackEvents = functions
                         source: { channel: ev.channel, immediate: true },
                     }, { merge: true });
 
+                    // Start tracking this app for daily monitoring
+                    await db.collection("trackedApps").doc(keyDoc).set({
+                        id,
+                        bundleId: null,
+                        name,
+                        link,
+                        uploader: ev.user || null,
+                        firstLiveAt: admin.firestore.FieldValue.serverTimestamp(),
+                        lastCheckedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        status: "live", // live, terminated, confirmed
+                        terminationDate: null,
+                        confirmationDate: null,
+                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    }, { merge: true });
+
                     await postToWebhook(getSubmitWebhook(), {
                         text: `✅ *${name}* is already live. Posted in #app-checker-updates.`,
                         icon: null
@@ -480,6 +512,367 @@ exports.slackEvents = functions
         return res.status(200).send("ignored");
     });
 
+/* ===================================== Daily App Tracking ===================================== */
+/** Check if an app is still live by checking a few key countries */
+async function checkAppStillLive({ id, bundleId }) {
+    const keyCountries = ["us", "gb", "fr", "de", "ca", "au"]; // Check major markets
+    const data = await checkAcrossCountries({ id, bundleId, countries: keyCountries });
+    const liveCount = data.results.filter(r => r.live).length;
+    return liveCount > 0; // Consider live if available in at least one major market
+}
+
+/** Calculate days between two dates */
+function daysBetween(date1, date2) {
+    const oneDay = 24 * 60 * 60 * 1000; // hours*minutes*seconds*milliseconds
+    return Math.round(Math.abs((date2 - date1) / oneDay));
+}
+
+/** Format days into human readable string */
+function formatDays(days) {
+    if (days === 0) return "same day";
+    if (days === 1) return "1 day";
+    if (days < 7) return `${days} days`;
+    const weeks = Math.floor(days / 7);
+    const remainingDays = days % 7;
+    if (weeks === 1 && remainingDays === 0) return "1 week";
+    if (remainingDays === 0) return `${weeks} weeks`;
+    return `${weeks} week${weeks > 1 ? 's' : ''} and ${remainingDays} day${remainingDays > 1 ? 's' : ''}`;
+}
+
+/** Send termination message to updates channel */
+async function sendTerminationMessage(app, daysSinceLive) {
+    const name = app.name || (app.id ? `App ID ${app.id}` : `Bundle ID ${app.bundleId}`);
+    const link = app.link || (app.id ? fallbackStoreLink({ id: app.id }) : null);
+    const uploader = app.uploader ? `<@${app.uploader}>` : "Unknown";
+    const duration = formatDays(daysSinceLive);
+    
+    const text = `🚫 *${name}* has been terminated after ${duration}.\n` +
+                `Uploaded by ${uploader}${link ? `\n${link}` : ""}`;
+    
+    await postToWebhook(getUpdatesWebhook(), { 
+        text, 
+        icon: null, 
+        ping: false 
+    });
+}
+
+/** Send confirmation message to updates channel */
+async function sendConfirmationMessage(app) {
+    const name = app.name || (app.id ? `App ID ${app.id}` : `Bundle ID ${app.bundleId}`);
+    const link = app.link || (app.id ? fallbackStoreLink({ id: app.id }) : null);
+    const uploader = app.uploader ? `<@${app.uploader}>` : "Unknown";
+    
+    const text = `✅ *${name}* is confirmed live after 3 weeks!\n` +
+                `Uploaded by ${uploader}${link ? `\n${link}` : ""}`;
+    
+    await postToWebhook(getUpdatesWebhook(), { 
+        text, 
+        icon: null, 
+        ping: false 
+    });
+}
+
+/* Daily cron job to check tracked apps */
+exports.dailyAppTracking = functions
+    .region("us-central1")
+    .pubsub.schedule("0 9 * * *")   // 9:00 AM every day (Africa/Tunis timezone)
+    .timeZone("Africa/Tunis")
+    .onRun(async () => {
+        const db = admin.firestore();
+        const now = new Date();
+        const threeWeeksAgo = new Date(now.getTime() - (21 * 24 * 60 * 60 * 1000));
+        
+        // Get all tracked apps that are still being monitored
+        const snap = await db.collection("trackedApps")
+            .where("status", "==", "live")
+            .get();
+        
+        if (snap.empty) return null;
+        
+        console.log(`Checking ${snap.docs.length} tracked apps for daily monitoring`);
+        
+        for (const doc of snap.docs) {
+            const app = doc.data();
+            try {
+                // Check if app is still live
+                const isStillLive = await checkAppStillLive({ 
+                    id: app.id, 
+                    bundleId: app.bundleId 
+                });
+                
+                const firstLiveDate = app.firstLiveAt ? app.firstLiveAt.toDate() : null;
+                if (!firstLiveDate) {
+                    console.warn(`App ${doc.id} has no firstLiveAt date, skipping`);
+                    continue;
+                }
+                
+                const daysSinceLive = daysBetween(firstLiveDate, now);
+                const isPastThreeWeeks = firstLiveDate <= threeWeeksAgo;
+                
+                if (!isStillLive) {
+                    // App has been terminated
+                    console.log(`App ${doc.id} (${app.name}) terminated after ${daysSinceLive} days`);
+                    
+                    await doc.ref.update({
+                        status: "terminated",
+                        terminationDate: admin.firestore.FieldValue.serverTimestamp(),
+                        lastCheckedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    
+                    await sendTerminationMessage(app, daysSinceLive);
+                    
+                } else if (isPastThreeWeeks && app.status === "live") {
+                    // App has passed 3 weeks and is still live - confirm it
+                    console.log(`App ${doc.id} (${app.name}) confirmed after 3 weeks`);
+                    
+                    await doc.ref.update({
+                        status: "confirmed",
+                        confirmationDate: admin.firestore.FieldValue.serverTimestamp(),
+                        lastCheckedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    
+                    await sendConfirmationMessage(app);
+                    
+                } else {
+                    // App is still live but hasn't reached 3 weeks yet - just update last checked
+                    await doc.ref.update({
+                        lastCheckedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
+                
+            } catch (err) {
+                console.error(`Error checking app ${doc.id}:`, err);
+                // Update last checked even on error to avoid retrying immediately
+                await doc.ref.update({
+                    lastCheckedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+        }
+        
+        return null;
+    });
+
+/* ===================================== Migration ===================================== */
+exports.migrateAnnouncedGames = functions
+    .region("us-central1")
+    .https.onRequest(async (req, res) => {
+        cors(req, res, async () => {
+            if (req.method === "OPTIONS") return res.status(204).send("");
+            
+            try {
+                const db = admin.firestore();
+                
+                // Get all announced apps that don't have corresponding tracked apps
+                const announcedSnap = await db.collection("announcedApps").get();
+                const trackedSnap = await db.collection("trackedApps").get();
+                
+                const trackedKeys = new Set();
+                trackedSnap.forEach(doc => {
+                    const data = doc.data();
+                    const key = data.id ? `id:${data.id}` : `bid:${data.bundleId}`;
+                    trackedKeys.add(key);
+                });
+                
+                let migrated = 0;
+                const batch = db.batch();
+                
+                for (const doc of announcedSnap.docs) {
+                    const data = doc.data();
+                    const key = data.id ? `id:${data.id}` : `bid:${data.bundleId}`;
+                    
+                    if (!trackedKeys.has(key)) {
+                        const trackedRef = db.collection("trackedApps").doc(key);
+                        batch.set(trackedRef, {
+                            id: data.id || null,
+                            bundleId: data.bundleId || null,
+                            name: data.name || (data.id ? `App ID ${data.id}` : `Bundle ID ${data.bundleId}`),
+                            link: data.link || (data.id ? fallbackStoreLink({ id: data.id }) : null),
+                            uploader: data.uploader || null,
+                            firstLiveAt: data.announcedAt || admin.firestore.FieldValue.serverTimestamp(),
+                            lastCheckedAt: admin.firestore.FieldValue.serverTimestamp(),
+                            status: "unknown", // Will be updated by daily tracking
+                            terminationDate: null,
+                            confirmationDate: null,
+                            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        });
+                        migrated++;
+                    }
+                }
+                
+                if (migrated > 0) {
+                    await batch.commit();
+                }
+                
+                return res.json({
+                    ok: true,
+                    migrated,
+                    message: `Successfully migrated ${migrated} announced games to tracked apps`
+                });
+                
+            } catch (e) {
+                console.error("Migration error:", e);
+                return res.status(500).json({ error: String(e) });
+            }
+        });
+    });
+
+/* ===================================== Manual Status Check ===================================== */
+exports.checkGameStatuses = functions
+    .region("us-central1")
+    .https.onRequest(async (req, res) => {
+        cors(req, res, async () => {
+            if (req.method === "OPTIONS") return res.status(204).send("");
+            
+            try {
+                const db = admin.firestore();
+                
+                // Get all tracked apps with unknown status
+                const snap = await db.collection("trackedApps")
+                    .where("status", "==", "unknown")
+                    .get();
+                
+                if (snap.empty) {
+                    return res.json({
+                        ok: true,
+                        message: "No games with unknown status found",
+                        checked: 0
+                    });
+                }
+                
+                let checked = 0;
+                let updated = 0;
+                
+                for (const doc of snap.docs) {
+                    const app = doc.data();
+                    try {
+                        // Check if app is still live
+                        const isStillLive = await checkAppStillLive({ 
+                            id: app.id, 
+                            bundleId: app.bundleId 
+                        });
+                        
+                        const firstLiveDate = app.firstLiveAt ? app.firstLiveAt.toDate() : null;
+                        if (!firstLiveDate) {
+                            console.warn(`App ${doc.id} has no firstLiveAt date, skipping`);
+                            continue;
+                        }
+                        
+                        const now = new Date();
+                        const daysSinceLive = daysBetween(firstLiveDate, now);
+                        const threeWeeksAgo = new Date(now.getTime() - (21 * 24 * 60 * 60 * 1000));
+                        const isPastThreeWeeks = firstLiveDate <= threeWeeksAgo;
+                        
+                        let newStatus = "unknown";
+                        if (!isStillLive) {
+                            newStatus = "terminated";
+                        } else if (isPastThreeWeeks) {
+                            newStatus = "confirmed";
+                        } else {
+                            newStatus = "live";
+                        }
+                        
+                        // Update the status
+                        await doc.ref.update({
+                            status: newStatus,
+                            lastCheckedAt: admin.firestore.FieldValue.serverTimestamp(),
+                            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        });
+                        
+                        if (newStatus !== "unknown") {
+                            updated++;
+                        }
+                        checked++;
+                        
+                        console.log(`App ${doc.id} (${app.name}) status updated to: ${newStatus}`);
+                        
+                    } catch (err) {
+                        console.error(`Error checking app ${doc.id}:`, err);
+                    }
+                }
+                
+                return res.json({
+                    ok: true,
+                    checked,
+                    updated,
+                    message: `Checked ${checked} games, updated ${updated} statuses`
+                });
+                
+            } catch (e) {
+                console.error("Error checking game statuses:", e);
+                return res.status(500).json({ error: String(e) });
+            }
+        });
+    });
+
+/* ===================================== Dashboard API ===================================== */
+exports.getAnnouncedGames = functions
+    .region("us-central1")
+    .https.onRequest(async (req, res) => {
+        cors(req, res, async () => {
+            if (req.method === "OPTIONS") return res.status(204).send("");
+            
+            try {
+                const db = admin.firestore();
+                
+                // Get announced apps
+                const announcedSnap = await db.collection("announcedApps")
+                    .orderBy("announcedAt", "desc")
+                    .limit(100)
+                    .get();
+                
+                // Get tracked apps for status information
+                const trackedSnap = await db.collection("trackedApps")
+                    .get();
+                
+                const trackedAppsMap = new Map();
+                trackedSnap.forEach(doc => {
+                    const data = doc.data();
+                    const key = data.id ? `id:${data.id}` : `bid:${data.bundleId}`;
+                    trackedAppsMap.set(key, data);
+                });
+                
+                const games = [];
+                announcedSnap.forEach(doc => {
+                    const data = doc.data();
+                    const key = data.id ? `id:${data.id}` : `bid:${data.bundleId}`;
+                    const trackedData = trackedAppsMap.get(key);
+                    
+                    games.push({
+                        id: data.id || data.bundleId,
+                        name: data.name || (data.id ? `App ID ${data.id}` : `Bundle ID ${data.bundleId}`),
+                        link: data.link || (data.id ? fallbackStoreLink({ id: data.id }) : null),
+                        uploader: data.uploader,
+                        announcedAt: data.announcedAt ? data.announcedAt.toDate().toISOString() : null,
+                        announcedMonth: data.announcedMonth,
+                        source: data.source,
+                        // Status from tracked apps
+                        status: trackedData?.status || "unknown",
+                        firstLiveAt: trackedData?.firstLiveAt ? trackedData.firstLiveAt.toDate().toISOString() : null,
+                        lastCheckedAt: trackedData?.lastCheckedAt ? trackedData.lastCheckedAt.toDate().toISOString() : null,
+                        terminationDate: trackedData?.terminationDate ? trackedData.terminationDate.toDate().toISOString() : null,
+                        confirmationDate: trackedData?.confirmationDate ? trackedData.confirmationDate.toDate().toISOString() : null,
+                    });
+                });
+                
+                res.set("Cache-Control", "public, max-age=60, s-maxage=300");
+                return res.json({
+                    ok: true,
+                    count: games.length,
+                    games
+                });
+                
+            } catch (e) {
+                console.error("Error fetching announced games:", e);
+                return res.status(500).json({ error: String(e) });
+            }
+        });
+    });
+
 /* ===================================== Reports ===================================== */
 // Build Slack-friendly report text for monthStamp "YYYY-MM"
 // Uses Firestore index (announcedMonth == monthStamp, orderBy announcedAt asc)
@@ -505,6 +898,24 @@ async function buildMonthlyReport(monthStamp) {
         if (uploader) perUploader.set(uploader, (perUploader.get(uploader) || 0) + 1);
     });
 
+    // Get tracking data for terminated and confirmed apps
+    const trackingSnap = await db.collection("trackedApps")
+        .where("firstLiveAt", ">=", new Date(`${monthStamp}-01`))
+        .where("firstLiveAt", "<", new Date(`${monthStamp}-01`).setMonth(new Date(`${monthStamp}-01`).getMonth() + 1))
+        .get();
+
+    const terminatedApps = [];
+    const confirmedApps = [];
+    
+    trackingSnap.forEach(doc => {
+        const d = doc.data() || {};
+        if (d.status === "terminated") {
+            terminatedApps.push(d);
+        } else if (d.status === "confirmed") {
+            confirmedApps.push(d);
+        }
+    });
+
     const count = games.length;
     const PER_GAME = 50;
 
@@ -518,6 +929,8 @@ async function buildMonthlyReport(monthStamp) {
         `📊 Monthly Report — ${label}\n\n` +
         `**Overview**\n` +
         `• Live launches: *${count}*\n` +
+        `• Confirmed after 3 weeks: *${confirmedApps.length}*\n` +
+        `• Terminated before 3 weeks: *${terminatedApps.length}*\n` +
         `• Period: ${firstDay}–${lastStr} (Africa/Tunis)\n`;
 
     if (count === 0) {
@@ -543,7 +956,33 @@ async function buildMonthlyReport(monthStamp) {
         return `${idx + 1}) 🎮 *${g.name}* — ${link}\n   Submitted by ${who} • Announced: ${when} • ID: ${g.id}`;
     }).join("\n");
 
-    return `${header}\n${payouts}\n\n**Games**\n${gamesBlock}`;
+    // Terminated apps section
+    let terminatedBlock = "";
+    if (terminatedApps.length > 0) {
+        terminatedBlock = "\n\n**Terminated Apps**\n" + terminatedApps.map((app, idx) => {
+            const name = app.name || (app.id ? `App ID ${app.id}` : `Bundle ID ${app.bundleId}`);
+            const who = app.uploader ? `<@${app.uploader}>` : "—";
+            const link = app.link ? `<${app.link}|App Store>` : "";
+            const terminatedAt = app.terminationDate ? dateStrTunis(app.terminationDate.toDate()) : "—";
+            const firstLiveAt = app.firstLiveAt ? dateStrTunis(app.firstLiveAt.toDate()) : "—";
+            return `${idx + 1}) 🚫 *${name}* — ${link}\n   Uploaded by ${who} • Live: ${firstLiveAt} • Terminated: ${terminatedAt}`;
+        }).join("\n");
+    }
+
+    // Confirmed apps section
+    let confirmedBlock = "";
+    if (confirmedApps.length > 0) {
+        confirmedBlock = "\n\n**Confirmed Apps (3+ weeks)**\n" + confirmedApps.map((app, idx) => {
+            const name = app.name || (app.id ? `App ID ${app.id}` : `Bundle ID ${app.bundleId}`);
+            const who = app.uploader ? `<@${app.uploader}>` : "—";
+            const link = app.link ? `<${app.link}|App Store>` : "";
+            const confirmedAt = app.confirmationDate ? dateStrTunis(app.confirmationDate.toDate()) : "—";
+            const firstLiveAt = app.firstLiveAt ? dateStrTunis(app.firstLiveAt.toDate()) : "—";
+            return `${idx + 1}) ✅ *${name}* — ${link}\n   Uploaded by ${who} • Live: ${firstLiveAt} • Confirmed: ${confirmedAt}`;
+        }).join("\n");
+    }
+
+    return `${header}\n${payouts}\n\n**Games**\n${gamesBlock}${terminatedBlock}${confirmedBlock}`;
 }
 
 /* Slash command: /repport  (current month-to-date, ONLY in report channel) */
